@@ -217,9 +217,6 @@ func (is *ImageStore) ValidateRepo(name string) (bool, error) {
 	// and an additional/optional BlobUploadDir in each image store
 	// for s3 we can not create empty dirs, so we check only against index.json and oci-layout
 	dir := path.Join(is.rootDir, name)
-	if fi, err := is.storeDriver.Stat(dir); err != nil || !fi.IsDir() {
-		return false, zerr.ErrRepoNotFound
-	}
 
 	files, err := is.storeDriver.List(dir)
 	if err != nil {
@@ -239,21 +236,13 @@ func (is *ImageStore) ValidateRepo(name string) (bool, error) {
 	}
 
 	for _, file := range files {
-		fileInfo, err := is.storeDriver.Stat(file)
-		if err != nil {
-			return false, err
+		if strings.HasSuffix(file, "index.json") {
+			found["index.json"] = true
 		}
 
-		filename, err := filepath.Rel(dir, file)
-		if err != nil {
-			return false, err
+		if strings.HasSuffix(file, ispec.ImageLayoutFile) {
+			found[ispec.ImageLayoutFile] = true
 		}
-
-		if filename == "blobs" && !fileInfo.IsDir() {
-			return false, nil
-		}
-
-		found[filename] = true
 	}
 
 	// check blobs dir exists only for filesystem, in s3 we can't have empty dirs
@@ -263,24 +252,10 @@ func (is *ImageStore) ValidateRepo(name string) (bool, error) {
 		}
 	}
 
-	for k, v := range found {
-		if !v && k != storageConstants.BlobUploadDir {
+	for _, v := range found {
+		if !v {
 			return false, nil
 		}
-	}
-
-	buf, err := is.storeDriver.ReadFile(path.Join(dir, ispec.ImageLayoutFile))
-	if err != nil {
-		return false, err
-	}
-
-	var il ispec.ImageLayout
-	if err := json.Unmarshal(buf, &il); err != nil {
-		return false, err
-	}
-
-	if il.Version != ispec.ImageLayoutVersion {
-		return false, zerr.ErrRepoBadVersion
 	}
 
 	return true, nil
@@ -319,7 +294,8 @@ func (is *ImageStore) GetRepositories() ([]string, error) {
 
 		stores = append(stores, rel)
 
-		return nil
+		// skip additional sub dirs
+		return driver.ErrSkipDir
 	})
 
 	// if the root directory is not yet created then return an empty slice of repositories
